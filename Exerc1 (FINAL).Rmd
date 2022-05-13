@@ -1,0 +1,584 @@
+---
+title: " Exercise Evaluation-EDM-GCD-ETSINF"
+output: html_notebook
+---
+
+#### Alejandro Zamora Donnay, Leandro Pérez Orero, Miquel Obrador Reina
+
+## Exercise 1 
+Use the dataset BostonHousing2 (target value is cmedv)  with the following train/test partition. 
+
+1. Given a prediction y' for a value y, consider a cost function  f  where f=y-y' if y>y', and f=2*(y'-y) if y'>y
+Try to learn a model (using only the train data) that minimises the cost measured with the test partition.
+
+2. Consider a cost function  f  where f=0 if |y-y'|<=5, and f=|y'-y| if  |y-y'|>5
+Try to learn a model (using only the train data) that minimises the cost measured with the test partition.
+
+Primeramente descargamos los datos mediante la libreria mlbench, realizamos una primera exploración de los datos, y los dividimos en datos de entrenamiento y datos de validación en un 75% / 25% repectivamente mediante la función createDataPartition de la librería caret, donde le pasamos la variable a predecir y el porcentaje de datos que queremos en los datos de entrenamiento. Esta función nos pasa una lista con todos los índices de los datos que se corresponden con la partición de entrenamiento.
+```{r}
+library(caret)
+library(mlbench)
+library(dplyr)
+library(skimr)
+data(BostonHousing2)
+print(glimpse(BostonHousing2))
+summary(BostonHousing2)
+skim(BostonHousing2)
+
+set.seed(280)
+#hv<-hv[complete.cases(hv),]
+hv_index <- createDataPartition(BostonHousing2$cmedv, p = .75, list = FALSE) # 75% train / 25% test
+tr <- BostonHousing2[ hv_index, ]
+te <- BostonHousing2[-hv_index, ]
+```
+
+Tras particionar los datos debemos realizar las dos funciones de coste que nos pide la pregunta. Para ello simplemento creamos un bucle for que recorra todos los valores predichos y 1 o 2 ifs para hacer una operación u otra, dependiendo del resultado de la comparativa entre lo predicho y lo real. Esto también depende de la función coste que estemos ejecutando, ya que los enunciados son diferentes. EN la primera función se penaliza el doble si el valor predicho es mayor que el real, mientras que en la segunda solo se penaliza si la diferencia entre ambos valorez es mayor a 5. Finalmente, lo que devuelven ambas funciones coste es la suma de todos los "errores de predicción" == coste total, el cual comparamos con todos los modelos utilizados.
+```{r funcion coste}
+cost1 <- function(pred,real) {              #1. función coste
+  f = 0                                     #inicializamos el coste a 0
+  for (i in 1:length(pred)){                #recorremos el vector de todos los valores predichos
+    if (pred[i] > real[i]){                 #comparamos cada valor predicho con su valor real  correspondiente
+      f = f + 2*(pred[i] - real[i])         #aplicamos la función coste  
+    } else{
+      f = f + (real[i] - pred[i])
+    }
+  }
+return(f)                                  #devolvemos el coste
+}
+
+cost2 <- function(pred,real) {            #2. función coste
+  f = 0                                   # inicializamos el coste a 0
+  for (i in 1:length(pred)){               #recorremos el vector de todos los valores predichos
+    if (abs(real[i] - pred[i]) > 5 ){     #si el error entre el predicho y real es mayor a 5
+      f = f + (abs(pred[i] - real[i]))    #aplicamos función coste
+    } 
+  }
+return(f)                               #devolvemos el coste
+}
+```
+
+En cuanto a la elección del modelo, decidimos probar varios modelos que se ajustasen a los datos obtenidos, es decir, un modelo de regresión (al tener tanto la variable respuesta como las demás variables de tipo numérico). Entre estos modelos se encuentran k vecinos más próximos, lm, árbol de regresión, svm, random forest, etc. Entrenamos cada modelo con los datos de entrenamiento mediante la función train, la cual ajusta cada modelo y calcula una medida de rendimiento basada en el remuestreo. Seguidamente, con la función predict predecimos la variable respuesta a partir de los resultados de la función anterior. Por último, calculamos el coste de cada modelo ajustado con ambas funciones anteriormente producidas. Tambié podemos evaluar el modelo mediante otras métricas en el conjunto de datos test como RMSE, MAE o el R-cuadrado.
+```{r message=FALSE, warning=FALSE}
+resul.df <- data.frame(mod=character(9), Coste1=numeric(9), Coste2=numeric(9))
+metrics.df = data.frame(mod=character(9), RMSE = numeric(9),Rsquared = numeric(9), MAE = numeric(9))
+mymethod<-c("lm","rpart","knn","earth","rf", "mlp", "svmLinear3", "gaussprLinear", 'gaussprPoly') #modelos a utilizar de regresión
+i = 1
+for (mod in mymethod) {                              #entrenamos cada modelo con los datos training
+  lm_fit <- train(cmedv ~ .,              #ambas funciones coste para comparar lo predicho con lo 
+                data = tr, 
+                method = mod)
+  preds <- predict(lm_fit, te)
+  resul.df[i,1] = mod
+  resul.df[i,2] = cost1(preds,te$cmedv)
+  resul.df[i,3] = cost2(preds,te$cmedv)
+  metric = postResample(pred = preds,obs = te$cmedv)  #calcula el rendimiento a través de remuestreos
+  metrics.df[i,1] = mod
+  metrics.df[i,2] = metric[1]
+  metrics.df[i,3] = metric[2]
+  metrics.df[i,4] = metric[3]
+  i = i+1
+}
+
+```
+
+Finalmente, realizamos una gráfica donde podemos comparar los costes de todos los modelos.
+```{r}
+library(ggplot2)
+library(reshape2)
+resul.df
+
+df <- melt(resul.df ,  id.vars = 'mod', variable.name = 'series')
+
+p<-ggplot(df, aes(x=mod, y=value, group=series)) +
+  geom_line(aes(color=series))+
+  geom_point(aes(color=series)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+```
+
+Observando los resultados obtenidos, podemos concluir que el mejor modelo, con el cual obtenemos un coste más cercano a 0 (hay muy poca diferencia entre los valores predichos y los reales), es el earth con un coste de 17.23. Este modelo consiste en una regresión spline adaptativa multivariante, que es generalización tanto de la regresión lineal por pasos (stepwise linear regression) como de los árboles de decisión CART. En segundo lugar se encuentra el gaussprLinear (porceso gaussiano) con un coste de 21.21. En cambio, el peor modelo ajustado es elmlp (perceptrón multicapa) con un coste que asciende a 1135.13.
+
+En cuanto a la segunda función de coste, el modelo que mejor entrena los datos de entranamiento y que, por lo tanto, se ajusta a los de validación es el svmLinear3 con un coste de 6.00, seguido de gaussprLinear con 6.98. En el último puesto se encuentra otra vez el perceptrón multicapa (678.27). En general, los costes relacionados con la primera función de coste son mucho más elevados que los de la segunda.
+
+Al mismo tiempo, podemos visualizar y comparar otras métricas de los modelos.
+```{r}
+metrics.df
+
+df <- melt(metrics.df ,  id.vars = 'mod', variable.name = 'series')
+
+p<-ggplot(df, aes(x=mod, y=value, group=series)) +
+  geom_line(aes(color=series))+
+  geom_point(aes(color=series)) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+```
+Como podemos observar, estas métrcias muestran resultados muy parecidos a los costes, siendo los modelos con menos costes los que menor valor tienen en las otras métricas y, por lo tanto, obteniendo mejores resultados. Lo mismo pasa con los modelos que obtienen unos costes más altos. En este caso, el svmLinear3 es el modelo con menor RMSE (raíz del error cuadrático medio), knn con menor Rsquared (versión estandarizada del error cuadrático medio), y earth con menor MAE (error absoluto medio).  
+
+## Exercise 2
+Consider the dataset Breastcancer with the following partition train/test. Consider the test costs for each attribute given by the array testcosts (the first position of the array corresponds to the first attribute, CL.thickness, the second to Cell.size..). Try to minimise the cost of testing while getting a good accuracy. Show the best models in a plot showing  AUC versus test cost (measured in the test dataset)
+```{r}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+library(mlbench)
+data(BreastCancer)
+BreastCancer<-BreastCancer[,-1]
+set.seed(480)
+BreastCancer<-BreastCancer[complete.cases(BreastCancer),]
+hv_index <- createDataPartition(BreastCancer$Class, p = .75, list = FALSE)
+tr <- BreastCancer[ hv_index, ]
+te <- BreastCancer[-hv_index, ]
+testscosts<-c(2,4,3,1,5,3,2,4,2) 
+```
+
+A continuación creamos una función `costes` que calcule el coste de los diferentes modelos de árboles de clasificación.
+
+```{r}
+costes <- function(arbol_decision, dataframe, testscosts) { 
+  var_costs <- data.frame(var = colnames(dataframe[c(1:9)]), testscosts) #Variable costs
+  fallos <- arbol_decision$frame[1:2][arbol_decision$frame[1] != '<leaf>',] #Errors
+  resul <- Reduce(merge, list(var_costs,fallos)) 
+  final_costs <- sum(resul$testscosts*resul$n)
+  final_costs
+}
+```
+
+
+### Modelo 1: sin testscosts
+
+En primer lugar, creamos un modelo utilizando la función `rpart` de rpart para entrenar nuestro modelo sin utilizar los costes.
+
+```{r}
+set.seed(123) #Locks seed for random partitioning
+arbol.nc <- rpart(Class ~., data = tr, method = "class") #Model
+pred.nc <- predict(arbol.nc, te, type = "class") #Prediction
+
+rpart.plot(arbol.nc) #Plot the tree
+```
+Como se puede apreciar, las variables que ayudan a clasificar los tumores en benigno o maligno son `cell.size`, `Bare.nuclei` y `cell.shape`.
+
+Ahora vamos a comprobar el accuraccy y el coste para este modelo (sin el coste de las variables).
+
+```{r}
+acuracy.nc <- mean(pred.nc == te$Class)
+cost.nc <- costes(arbol.nc, BreastCancer,testscosts)
+
+cost.nc # coste del modelo sin costes de variables 
+acuracy.nc # accuraccy del modelo sin costes de variables
+```
+
+También vamos a calcular el área bajo la curva(AUC) a partir de la curva ROC.
+
+```{r}
+set.seed(29012)
+prob.nc <- predict(arbol.nc, te, type = 'prob')
+prob.nc <- as.data.frame(prob.nc)
+roc.nc <- roc(te$Class, prob.nc$benign) # También se puede utilizar la clase malignant
+AUC.nc = auc(roc.nc) 
+AUC.nc 
+```
+La curva de este primer modelo es de 0.9571.
+
+
+### Modelo 2: con testscosts
+
+Para este segundo modelo, vamos a tener en cuenta el coste de las variables (`testcosts`).
+
+```{r}
+set.seed(123) #Locks seed for random partitioning
+arbol.c <- rpart(Class ~., data = tr, method = "class", cost = testscosts) #Model
+pred.c <- predict(arbol.c ,te, type = "class") #Prediction
+
+rpart.plot(arbol.c) #Plot the tree
+```
+
+Como se puede observar, las variables que mejor ayudan a clasificar los tumores en benigno o maligno son `Bare.nuclei`, `cell.shape` ,`Cl.thickness`, `BI.cromatin` y `Marg.adhesion`.
+
+Mirando ambos modelos vemos como la variable `cell.size` no tiene la importancia como tenia en el modelo sin costes (posiblemente por su valor de coste 4). Además las variables `Cl.thickness` y `Marg.adhesion` que en el modelo anterior no tenian importancia, son muy importantes si tenemos en cuenta los testcosts.
+
+Ahora vamos a comprobar el accuracy y el coste del modelo.
+
+```{r}
+acuracy.c <- mean(pred.c == te$Class)
+cost.c <- costes(arbol.c, BreastCancer, testscosts) #Coste del modelo con costes de variables (testcosts)
+cost.c #Coste del modelo teniendo en cuenta los costes de variables (testcosts)
+acuracy.c #Accuraccy del modelo con costes de variables (testcosts)
+```
+
+Podemos ver como en este modelo, que tiene en cuenta el coste de variables, presenta un coste de 2494, un valor inferior al de sin costes cuyo valor era de 3201. Pero a nivel de accuracy el modelo sin costes presenta un porcentaje mayor. 
+
+Para este nuevo modelo tambíen vamos a calcular el área bajo la curva(AUC) a partir de la curva ROC.
+
+```{r}
+prob.c <- predict(arbol.c, te, type = 'prob')
+prob.c <- as.data.frame(prob.c)
+roc.c <- roc(te$Class, prob.c$benign) #Podemos utilizar también la clase malignant
+AUC.c = auc(roc.c)
+AUC.c
+```
+
+Si observamos el área bajo la curva vemos como el valor del modelo con costes es un poco menor que en el modelo sin costes.
+
+Ahora que ya hemos visto el modelo con y sin costes vamos a intentar reducir los costes mientras aumentamos el valor del accuracy, es decir, vamos a mejorar la predicción del modelo, tal y como nos piden.
+Para ello, vamos a podar el árbol de decisión para obtener la decisión óptima, utilizando la función `plotcp` para representar visualmente de los resultados de validación cruzada en un objeto. 
+
+```{r}
+plotcp(arbol.c) #El parámetro cp indica la complejidad del árbol.
+```
+Por tanto, vamos a realizar podas para los distintos parametros de complejidad (cp) que estén cerca del minimo Xerror de los costes del arbol. Los tres parametros que se situan cerca de este error son: 0.08 (3 niveles del árbol), 0.022 (4 niveles) y 0.013 (6 niveles)
+
+
+### Modelo 3: Poda del árbol 3 niveles con costes
+
+Para este modelo vamos a realizar una poda del árbol con 3 niveles, cuyo cp es 0.08.
+
+```{r}
+arbol.poda3 <- prune(arbol.c, cp = 0.08) #Model
+pred.poda3 <- predict(arbol.poda3 ,te, type = "class") #Prediction
+
+rpart.plot(arbol.poda3) #Plot the tree
+```
+En este modelo, las variables que sirven para discriminar los tumores benignos o malignos son `Marg.adhesion` y `Cl.thickness`.
+
+Comprobamos el accuracy y el coste de este modelo (con testcosts y poda de 3 niveles) tal y como lo hemos hecho con los modelos anteriores.
+
+```{r}
+accuracy.poda3 <- mean(pred.poda3 == te$Class)
+costs.poda3 <- costes(arbol.poda3, BreastCancer,testscosts) 
+
+costs.poda3 # coste del modelo con testcosts y poda de 3 niveles
+accuracy.poda3 # accuraccy del modelo con testcosts y poda de 3 niveles
+```
+Si realizamos poda con 3 niveles del árbol, reducimos los costes del modelo en casi 1000 unidades. Sin embargo, el accuracy también disminuye en un 5% con respecto al segundo modelo.
+
+```{r}
+prob.poda3 <- predict(arbol.poda3, te, type = 'prob')
+prob.poda3 <- as.data.frame(prob.poda3)
+roc.poda3 <- roc(te$Class, prob.poda3$benign) #Podemos utilizar también la clase malignant
+AUC.poda3 = auc(roc.poda3)
+AUC.poda3
+```
+
+### Modelo 4: Poda del árbol 4 niveles con costes
+
+Para este modelo vamos a realizar una poda del árbol con 4 niveles, cuyo cp es 0.022.
+
+```{r}
+arbol.poda4 <- prune(arbol.c, cp = 0.022) #Model
+pred.poda4 <- predict(arbol.poda4 ,te, type = "class") #Prediction
+
+rpart.plot(arbol.poda4) #Plot the tree
+```
+En este modelo, las variables que sirven para discriminar los tumores benignos o malignos son `Marg.adhesion`, `Cl.thickness` y `Bare.nuclei`. Vemos como las dos primeras variables se repiten al igual que en modelo con 3 niveles de poda.
+
+Comprobamos el accuraccy y el coste de este modelo (con testcosts y poda de 4 niveles).
+
+```{r}
+accuracy.poda4 <- mean(pred.poda4 == te$Class)
+costs.poda4 <- costes(arbol.poda4, BreastCancer,testscosts) 
+
+costs.poda4 # coste del modelo con testcosts y poda de 4 niveles
+accuracy.poda4 # accuraccy del modelo con testcosts y poda de 4 niveles
+```
+
+Poda con 4 niveles es bastante mejor que el anterior. A pesar de que los costes aumenten en más de 100 ,el accuracy también sufre un aumento de un 88% a un 92%.
+
+```{r}
+prob.poda4 <- predict(arbol.poda4, te, type = 'prob')
+prob.poda4 <- as.data.frame(prob.poda4)
+roc.poda4 <- roc(te$Class, prob.poda4$benign) #Podemos utilizar también la clase malignant
+AUC.poda4 = auc(roc.poda4)
+AUC.poda4
+```
+
+### Modelo 5: Poda del árbol 5 niveles con costes
+
+En este modelo, realizaremos una poda del árbol con 6 niveles, cuyo cp es 0.013.
+
+```{r}
+arbol.poda6 <- prune(arbol.c, cp = 0.013) #Model
+pred.poda6 <- predict(arbol.poda6 ,te, type = "class") #Prediction
+
+rpart.plot(arbol.poda6) #Plot the tree
+```
+En este modelo, las variables que sirven para discriminar los tumores benignos o malignos son `Marg.adhesion`, `Cl.thickness`, `Bare.nuclei`, `BI.cromatin` y `Cell.shape`. Vemos como las tres primeras variables se repiten al igual que en modelo con 4 niveles de poda.
+
+Para este modelo también vamos a comprobar el accuraccy y el coste de este modelo (con testcosts y poda de 6 niveles).
+
+```{r}
+accuracy.poda6 <- mean(pred.poda6 == te$Class)
+costs.poda6 <- costes(arbol.poda6, BreastCancer,testscosts) 
+
+costs.poda6 #Coste del modelo con testcosts y poda de 6 niveles
+accuracy.poda6 #Accuraccy del modelo con testcosts y poda de 6 niveles
+```
+
+Como vemos en los resultado obtenidos poda con 6 niveles es bastante peor que el anterior. Los costes sufren un aumento de casi 1000 mientras que el accuracy únicamente aumenta un 1%.
+
+```{r}
+prob.poda6 <- predict(arbol.poda6, te, type = 'prob')
+prob.poda6 <- as.data.frame(prob.poda6)
+roc.poda6 <- roc(te$Class, prob.poda6$benign) #Podemos utilizar también la clase malignant
+AUC.poda6 = auc(roc.poda6)
+AUC.poda6
+```
+Vamos a finalizar visualizando las curvas AUC para cada modelo que hemos generado.
+
+```{r}
+plot(roc.nc, col = 'black')
+lines(roc.c, col = 'yellow')
+lines(roc.poda3, col = 'red')
+lines(roc.poda4 , col = 'blue')
+lines(roc.poda6, col = 'green')
+
+legend("bottomright", legend=c("Modelo sin costes", "Modelo con costes",'Poda3','Poda4','Poda6'),
+       col=c("black", "yellow",'red','blue','green'), lty = 1:2, cex=0.8)
+```
+
+Finalmente, podemos concluir que el árbol con poda de 6 niveles es el peor de los 3 respecto a los costes, aunque es el mejor en cuanto a accuracy. Si realizamos poda con 3 niveles del árbol, disminuimos el accuracy en un pequeño porcentaje pero también disminuimos los costes con respecto a los demás niveles. Por tanto, en función de si queremos reducir el coste o aumentar el accuracy elegiremos entre un modelo u otro.
+
+## Exercise 3
+Given the following german credit dataset and the partition train/test. 
+Try to learn a model (using only the train data) that minimises the cost measured with the test partition considering the following cost matrix (i referes to the feature *amount* of the instance).
+
+
+| Predicted/actual   |  Good | Bad  | 
+|:---|:---|:---|
+| Good | -i*0.05 | i  |   
+| Bad |i*0.05 | 0   |
+
+En primer lugar nos descargamos los datos sobre el crédito alemán, renombramos las columnas y convertimos la variable respuesta en factor (0 = good, 1 = bad) para poder predecirla mediante las variables restantes. En el caso de que estas variables sean de tipo string/character, se transforman a factor para poder aplicar algoritmos de clasificación. Tal y como hemos hecho en los ejercicios 1 y 2, dividimos el conjunto de datos en 75% entrenamiento y 25% test.
+```{r}
+library(dplyr)
+library(mlr)
+
+german_credit <- read.table("http://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german/german.data")
+
+colnames(german_credit) <- c("chk_acct", "duration", "credit_his", "purpose", 
+                            "amount", "saving_acct", "present_emp", "installment_rate", "sex", "other_debtor", 
+                            "present_resid", "property", "age", "other_install", "housing", "n_credits", 
+                            "job", "n_people", "telephone", "foreign", "response")
+
+german_credit$response <- german_credit$response - 1
+german_credit$response <- factor(german_credit$response,levels=c(0,1),labels=c("good","bad")) # transformamos la variable a predecir en factor
+
+german_credit <- mutate_if(german_credit, is.character, as.factor) #transformamos todas las variables de tipo carácter en factor
+
+set.seed(280)
+hv_index <- createDataPartition(german_credit$response, p = .75, list = FALSE) #dividimos los datos en 75% train y 25% test
+tr <- german_credit[ hv_index, ] # train
+te <- german_credit[-hv_index, ] # test
+```
+
+Primeramente, creamos una variable con el task, es decir, prerparamos nuestro conjunto de datos para crear el modelo de clasificación. En este caso, le tenemos que indicar la variable respuesta de nuestro dataset, cuyo nombre es "response", la cual clasifica un cliente como bueno o malo.
+```{r task}
+tr.task = makeClassifTask(data = tr, target = "response") #task
+```
+
+Posteriormente, creamos la matriz de costes, la cual nos viene dada en el enunciado. Como podemos ver, el coste con una mayor repercusión negativa es el de clasificar a un cliente como bueno siendo malo. Por otro lado, el menor coste se aplica cuando se clasifica un cliente bueno siendo bueno.
+```{r cost}
+costes = matrix(c(-0.05,0.05,1,0), 2)   #matriz de costes
+colnames(costes) = rownames(costes) = getTaskClassLevels(tr.task)
+costes
+```
+
+Seguidamente, creamos una variable que almacena las medidas de coste por cada error de clasificación.
+```{r rendimiento}
+tr.costs = makeCostMeasure(id = "tr.costs", name = "Training costs", costs = costes, best = -0.05, worst = 1) #medidas de coste
+```
+
+Una vez realizado todo esto, comenzaremos a probar distintos modelos que se puedan ajustar a nuestro problema de clasificación. La metodología será probar todos ellos y quedarnos con el que mejor resultado nos proporciona (menor coste) y lo aplicaremos al conjunto de test para ver cómo funciona. También usaremos métodos como el Thresholding (umbrales), el cual se basa en cómo de bien predice según las probabilidades.
+
+### THRESHOLDING TEÓRICO
+```{r modelos}
+set.seed(1003)
+# Árbol de clasificación
+lrn = makeLearner("classif.rpart", predict.type = "prob") # crear objeto de aprendizaje
+rin = makeResampleInstance("CV", iters = 5, task = tr.task) #instancia un objeto de estrategia de remuestreo (cross validation)
+r = resample(lrn, tr.task, rin, measures = list(tr.costs, mmce), show.info = FALSE) # remuestreo
+th = 2/rowSums(costes) 
+names(th) = getTaskClassLevels(tr.task)
+prediccion_threshold = setThreshold(r$pred, threshold = th) # establecer el umbral del objeto de predicción
+performance(prediccion_threshold, measures = list(tr.costs, mmce, acc)) # rendimiento del modelo 
+```
+En este caso, los costes son de -0.02.
+
+```{r evaluacion}
+# regresión logística de clasificación
+lrn = makeLearner("classif.multinom", predict.type = "prob")
+rin = makeResampleInstance("CV", iters = 5, task = tr.task)
+r = resample(lrn, tr.task, rin, measures = list(tr.costs, mmce), show.info = FALSE)
+```
+
+```{r threshold}
+set.seed(1090)
+th = 2/rowSums(costes)
+names(th) = getTaskClassLevels(tr.task)
+prediccion_threshold = setThreshold(r$pred, threshold = th)
+performance(prediccion_threshold, measures = list(tr.costs, mmce, acc))
+```
+Obtenemos unos costes de -0.018.
+
+```{r eval2}
+set.seed(2930)
+# máquinas de vectores soprote.
+lrn = makeLearner("classif.ksvm", predict.type = "prob")
+rin = makeResampleInstance("CV", iters = 5, task = tr.task)
+r = resample(lrn, tr.task, rin, measures = list(tr.costs, mmce), show.info = FALSE)
+th = 2/rowSums(costes)
+names(th) = getTaskClassLevels(tr.task)
+prediccion_threshold = setThreshold(r$pred, threshold = th)
+performance(prediccion_threshold, measures = list(tr.costs, mmce, acc))
+```
+Coste = -0.02
+
+```{r}
+set.seed(2930)
+# redes neuronales
+lrn = makeLearner("classif.nnet", predict.type = "prob")
+rin = makeResampleInstance("CV", iters = 5, task = tr.task)
+r = resample(lrn, tr.task, rin, measures = list(tr.costs, mmce), show.info = FALSE)
+th = 2/rowSums(costes)
+names(th) = getTaskClassLevels(tr.task)
+prediccion_threshold = setThreshold(r$pred, threshold = th)
+performance(prediccion_threshold, measures = list(tr.costs, mmce, acc))
+```
+Costes método nnet: -0.02.
+
+Con este tipo de threshold, los mejores resultados los obtenemos cuando evaluamos un modelo árbol de clasificación, máquina de vectores soporte o redes neuronales, al tener un menor error -0.02.
+
+### THRESHOLD EMPÍRICO
+```{r th}
+#  regresión logística de clasificación
+lrn = makeLearner('classif.multinom', predict.type = 'prob')
+modelo = train(lrn, tr.task) # entrenar modelo 
+```
+
+```{r pred}
+prediccion = predict(modelo, task = tr.task) # predecir variable respuesta
+tune_threshold_empirico = tuneThreshold(pred = prediccion, measure = tr.costs) # ajustar umbral de predicción
+pred_threshold_empirico = setThreshold(prediccion, tune_threshold_empirico$th)
+performance(pred_threshold_empirico, measures = list(tr.costs,mmce,acc))
+```
+Obtenemos unos costes de -0.02.
+
+```{r clas}
+#  árbol de clasificación
+lrn = makeLearner('classif.rpart', predict.type = 'prob')
+modelo = train(lrn, tr.task)
+prediccion = predict(modelo, task = tr.task)
+tune_threshold_empirico = tuneThreshold(pred = prediccion, measure = tr.costs)
+pred_threshold_empirico = setThreshold(prediccion, tune_threshold_empirico$th)
+performance(pred_threshold_empirico, measures = list(tr.costs,mmce,acc))
+```
+Coste es equivalente a -0.02.
+
+```{r svm}
+#  máquinas de vectores soporte.
+lrn = makeLearner('classif.ksvm', predict.type = 'prob')
+modelo = train(lrn, tr.task)
+prediccion = predict(modelo, task = tr.task)
+tune_threshold_empirico = tuneThreshold(pred = prediccion, measure = tr.costs)
+pred_threshold_empirico = setThreshold(prediccion, tune_threshold_empirico$th)
+performance(pred_threshold_empirico, measures = list(tr.costs,mmce,acc))
+```
+Para svm el coste es de -0.024.
+
+```{r nnet}
+#  redes neuronales
+lrn = makeLearner('classif.nnet', predict.type = 'prob')
+modelo = train(lrn, tr.task)
+prediccion = predict(modelo, task = tr.task)
+tune_threshold_empirico = tuneThreshold(pred = prediccion, measure = tr.costs)
+pred_threshold_empirico = setThreshold(prediccion, tune_threshold_empirico$th)
+performance(pred_threshold_empirico, measures = list(tr.costs,mmce,acc))
+```
+EL modelo nnet tiene un coste de -0.02.
+
+Mediante este tipo de threshold, el modelo que aporta un error más pequeño es el de máquinas de vectores soporte con un coste de -0.024.
+
+Sin embargo, vamos a comprobar si los datos de entrenamiento están muy desbalanceados, con el objetivo de rebalancearlos y posiblemente obtener mejor resultados en cuanto al coste.
+```{r balan}
+table(tr$response)    # comprobamos que los datos de entrenamiento están desbalanceados
+```
+
+### REBALANCEO
+```{r reg}
+# regresión logística de clasificación
+
+lrn = makeLearner("classif.multinom",trace=FALSE)
+lrn = makeWeightedClassesWrapper(lrn)
+
+ps = makeParamSet(makeNumericVectorParam("wcw.weight", len = 1, lower = 0, upper = 1)) # conjunto de parámetros 
+ctrl = makeTuneControlRandom() # crear control para el ajuste de hiperparámetros con búsqueda aleatoria.
+
+tune.res = tuneParams(lrn, tr.task, resampling = rin, par.set = ps,
+  measures = list(tr.costs, mmce, acc), control = ctrl, show.info = FALSE) # ajuste de hiperparámetros
+tune.res
+```
+Obtenemos un coste de 0.082.
+
+```{r rpart}
+# árbol de clasificación
+
+lrn = makeLearner("classif.rpart")
+lrn = makeWeightedClassesWrapper(lrn)
+
+ps = makeParamSet(makeNumericVectorParam("wcw.weight", len = 1, lower = 0, upper = 1))
+ctrl = makeTuneControlRandom()
+
+tune.res = tuneParams(lrn, tr.task, resampling = rin, par.set = ps,
+  measures = list(tr.costs, mmce, acc), control = ctrl, show.info = FALSE)
+tune.res
+```
+Coste = 0.091.
+
+```{r ksvm}
+# máquinas de vectores soporte.
+
+lrn = makeLearner("classif.ksvm")
+lrn = makeWeightedClassesWrapper(lrn)
+
+ps = makeParamSet(makeNumericVectorParam("wcw.weight", len = 1, lower = 0, upper = 1))
+ctrl = makeTuneControlRandom()
+
+tune.res = tuneParams(lrn, tr.task, resampling = rin, par.set = ps,
+  measures = list(tr.costs, mmce, acc), control = ctrl, show.info = FALSE)
+tune.res
+```
+Coste = 0.015.
+
+```{r}
+# redes neuronales
+
+lrn = makeLearner("classif.nnet",trace = FALSE)
+lrn = makeWeightedClassesWrapper(lrn)
+
+ps = makeParamSet(makeNumericVectorParam("wcw.weight", len = 1, lower = 0, upper = 1))
+ctrl = makeTuneControlRandom()
+
+tune.res = tuneParams(lrn, tr.task, resampling = rin, par.set = ps,
+  measures = list(tr.costs, mmce, acc), control = ctrl, show.info = FALSE)
+tune.res
+```
+Coste = -0.02
+
+Mediante el rebalanceo, el modelo que mejores resultados presenta es el de redes neuronales con un coste de -0.02.
+
+El método con el que mejores resultados hemos obtenido es con el Threshold empírico, evaluando un modelo de máquinas de vectores soporte, con el que menor coste acabamos (-0.024). Una vez probados los diversos métodos con el conjunto de entrenamiento, vamos a utilizar el que mejorres resultados nos ha proporcionado para ver cómo se comporta con el conjunto de validación.
+
+```{r per}
+tr.task = makeClassifTask( data = tr, target = 'response')
+tr.task = removeConstantFeatures(tr.task)
+te.task = makeClassifTask( data = te, target = 'response')
+te.task = removeConstantFeatures(te.task)
+
+lrn = makeLearner('classif.ksvm', predict.type = 'prob')
+modelo = train(lrn, tr.task)
+prediccion = predict(modelo, task = te.task)
+
+tune_threshold_empirico = tuneThreshold(pred = prediccion, measure = tr.costs)
+pred_threshold_empirico = setThreshold(prediccion, tune_threshold_empirico$th)
+
+performance(pred_threshold_empirico, measures = list(tr.costs,mmce,acc))
+```
+Obtenemos unos costes de -0.0202, además de un accuracy del 70%, por lo que podemos decir que el modelo predice bastante bien los tipos de cliente, pero no perfectamente.
